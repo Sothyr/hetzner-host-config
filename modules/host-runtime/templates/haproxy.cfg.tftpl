@@ -1,0 +1,45 @@
+# Managed by hetzner-host-config. Changes on the server are overwritten.
+# Entry point of the host. TCP only: TLS ends in Caddy, which gets the client address by PROXY protocol v2.
+global
+    log /dev/log local0 info
+    maxconn ${maxconn}
+    user haproxy
+    group haproxy
+    stats socket /run/haproxy/admin.sock mode 600 level admin
+
+defaults
+    mode tcp
+    log global
+    option tcplog
+    option dontlognull
+    timeout connect 5s
+    timeout client 60s
+    timeout server 60s
+    timeout tunnel 1h
+
+# Per client address: connection rate over 10 seconds and open connections. Over the limit the connection is closed.
+backend limits
+    stick-table type ipv6 size 200k expire 60s store conn_rate(10s),conn_cur
+
+frontend http_in
+    bind :::80 v4v6
+    tcp-request connection track-sc0 src table limits
+    tcp-request connection reject if { sc0_conn_rate(limits) gt ${conn_rate} }
+    tcp-request connection reject if { sc0_conn_cur(limits) gt ${conn_cur} }
+    default_backend caddy_http
+
+frontend https_in
+    bind :::443 v4v6
+    tcp-request connection track-sc0 src table limits
+    tcp-request connection reject if { sc0_conn_rate(limits) gt ${conn_rate} }
+    tcp-request connection reject if { sc0_conn_cur(limits) gt ${conn_cur} }
+    tcp-request inspect-delay 5s
+    tcp-request content accept if { req.ssl_hello_type 1 }
+    tcp-request content reject
+    default_backend caddy_https
+
+backend caddy_http
+    server caddy 127.0.0.1:${http_port} send-proxy-v2 check
+
+backend caddy_https
+    server caddy 127.0.0.1:${https_port} send-proxy-v2 check

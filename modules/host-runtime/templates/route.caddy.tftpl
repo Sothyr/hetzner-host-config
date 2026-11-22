@@ -1,0 +1,19 @@
+# Route ${name}. Managed by hetzner-host-config, do not edit on the server.
+${join(", ", domains)} {
+%{ if encode ~}
+	encode zstd gzip
+%{ endif ~}
+%{ if max_body != null ~}
+	request_body {
+		max_size ${max_body}
+	}
+%{ endif ~}
+%{ if allow_ips != null ~}
+	@denied not remote_ip ${join(" ", allow_ips)}
+	respond @denied 403
+%{ endif ~}
+%{ if trimspace(extra) != "" ~}
+	${replace(trimspace(extra), "\n", "\n\t")}
+%{ endif ~}
+	reverse_proxy ${upstream}
+}

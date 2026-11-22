@@ -1,0 +1,96 @@
+name: Tofu
+
+run-name: Tofu ${{ github.event_name == 'workflow_dispatch' && 'manual run' || github.ref_name }}
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Apply the platform stack"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TOFU_VERSION: "1.13.9"
+
+jobs:
+  check:
+    name: Check / format, validate, shellcheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - name: 1. Format
+        run: tofu fmt -recursive -check -diff
+      - name: 2. Validate stacks
+        env:
+          TF_VAR_state_passphrase: validate-only-passphrase
+        run: |
+          for stack in stacks/platform stacks/identity; do
+            echo "::group::$stack"
+            tofu -chdir="$stack" init -backend=false -input=false
+            tofu -chdir="$stack" validate
+            echo "::endgroup::"
+          done
+      - name: 3. Shellcheck
+        run: shellcheck -S warning modules/host-runtime/files/*.sh scripts/*.sh
+
+  # Manual run only, with approval of the environment "production".
+  # The runner signs in to the hosts with its own short-lived certificate (principal hhc-deploy).
+  apply:
+    name: Apply / platform stack
+    if: github.event_name == 'workflow_dispatch' && inputs.apply
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    concurrency: production
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up OpenTofu
+        uses: opentofu/setup-opentofu@v2
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+          tofu_wrapper: false
+      - name: Write secret files
+        env:
+          BACKEND_HCL: ${{ secrets.BACKEND_HCL }}
+          SECRETS_TFVARS: ${{ secrets.SECRETS_TFVARS }}
+          DEPLOY_KEY: ${{ secrets.HHC_DEPLOY_KEY }}
+          DEPLOY_CERT: ${{ secrets.HHC_DEPLOY_CERT }}
+        run: |
+          umask 077
+          printf '%s\n' "$BACKEND_HCL" > stacks/platform/backend.hcl
+          printf '%s\n' "$SECRETS_TFVARS" > stacks/platform/secrets.auto.tfvars
+          mkdir -p ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/hhc_deploy
+          printf '%s\n' "$DEPLOY_CERT" > ~/.ssh/hhc_deploy-cert.pub
+      - name: Plan, then apply
+        env:
+          TF_VAR_hcloud_token: ${{ secrets.HCLOUD_TOKEN }}
+          TF_VAR_state_passphrase: ${{ secrets.STATE_PASSPHRASE }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.STATE_S3_ACCESS_KEY }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.STATE_S3_SECRET_KEY }}
+        run: |
+          echo "::group::Init"
+          tofu -chdir=stacks/platform init -input=false -backend-config=backend.hcl
+          echo "::endgroup::"
+          echo "::group::Plan"
+          tofu -chdir=stacks/platform plan -input=false -out=tfplan
+          echo "::endgroup::"
+          echo "::group::Apply"
+          tofu -chdir=stacks/platform apply -input=false tfplan
+          echo "::endgroup::"

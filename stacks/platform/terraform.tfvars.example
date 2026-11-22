@@ -1,0 +1,161 @@
+# Copy to terraform.tfvars. Secrets (passwords, deploy keys, tokens) go into secrets.auto.tfvars,
+# which git ignores. Tokens of the providers come from the environment (TF_VAR_hcloud_token).
+
+ssh = {
+  # Public key of your SSH user CA. A second key here allows a CA rotation without lockout.
+  user_ca_public_keys = ["ssh-ed25519 AAAA... hhc-user-ca"]
+  admin_user          = "hhc"
+  admin_principals    = ["hhc-deploy"]
+  # Key and certificate OpenTofu uses. Sign with scripts/ssh-sign.ps1 -Principals hhc-deploy.
+  private_key_path = "~/.ssh/hhc_deploy"
+  certificate_path = "~/.ssh/hhc_deploy-cert.pub"
+}
+
+users = {
+  florian = { principals = ["florian"], sudo = true }
+  # helper = { principals = ["helper"], hosts = ["sothyr-1"] }
+}
+
+hosts = {
+  sothyr-1 = {
+    server_type = "cpx22" # check current types: hcloud server-type list
+    location    = "nbg1"
+    acme_email  = "admin@sothyr.de"
+    reverse_dns = "sothyr-1.sothyr.de"
+    haproxy     = { conn_rate = 100, conn_cur = 60 }
+    # Off-site copy to Hetzner Object Storage. Create the bucket and the S3 key first, then set enabled = true.
+    backup = {
+      offsite = {
+        enabled    = false
+        repository = "s3:fsn1.your-objectstorage.com/<bucket>" # location of the bucket
+        region     = "fsn1"
+        # paths    = ["/srv/backup"] # add volumes with uploads here, see README
+      }
+    }
+  }
+  # A second server is one more entry. Stacks and apps choose their host by name.
+  # games-1 = { server_type = "cx23", location = "fsn1", acme_email = "admin@sothyr.de" }
+}
+
+sothyr = {
+  sothyr-1 = {
+    git = {
+      url = "git@github.com:Sothyr/vereins-pages.git"
+      ref = "main"
+      # deploy_key in secrets.auto.tfvars
+    }
+    auth_host    = "auth.sothyr.de"
+    stats_host   = "stats.sothyr.de"
+    tickets_host = "tickets.sothyr.de"
+    mail = {
+      from = "tickets@sothyr.de"
+    }
+    # Content of platform/smtprelayd/smtprelayd.toml. Without it the relay stays off.
+    # smtprelay_config = <<-EOT
+    #   ...
+    # EOT
+
+    sites = {
+      bodensee-players = {
+        name        = "Bodensee Players"
+        domain      = "bodensee-players.de"
+        admin_email = "admin@bodensee-players.de"
+        tickets     = true
+        env = {
+          PRETIX_URL = "http://pretix:80" # check against the club .env
+          MAIL_FROM  = "web@bodensee-players.de"
+          CONTACT_TO = "info@bodensee-players.de"
+        }
+        # Prebuilt images save memory on the server. Without them api and frontend are built there.
+        # images = { api = "ghcr.io/sothyr/sothyr-pages-api:stable", frontend = "ghcr.io/sothyr/sothyr-pages-frontend:stable" }
+        # auto_update = true
+      }
+      ludite-kisslegg = {
+        name        = "Ludite! Kisslegg"
+        domain      = "ludite-kisslegg.de"
+        admin_email = "admin@ludite-kisslegg.de"
+        env = {
+          MAIL_FROM  = "web@ludite-kisslegg.de"
+          CONTACT_TO = "info@ludite-kisslegg.de"
+        }
+      }
+    }
+  }
+}
+
+# Any other compose app. Routes go through HAProxy and the edge Caddy of the host.
+# On a sothyr host the app joins the external network sothyr-shared, otherwise the network edge.
+apps = {
+  teamspeak = {
+    host  = "sothyr-1"
+    ports = ["9987/udp", "30033/tcp"]
+    files = {
+      "compose.yml" = {
+        content = <<-EOT
+          services:
+            teamspeak:
+              image: docker.io/library/teamspeak:3.13
+              restart: unless-stopped
+              mem_limit: 256m
+              ports:
+                - "9987:9987/udp"
+                - "30033:30033"
+              environment:
+                TS3SERVER_LICENSE: accept
+              volumes:
+                - data:/var/ts3server
+          volumes:
+            data:
+        EOT
+      }
+    }
+  }
+
+  registry = {
+    host = "sothyr-1"
+    files = {
+      "compose.yml" = {
+        content = <<-EOT
+          services:
+            registry:
+              image: docker.io/library/registry:2
+              restart: unless-stopped
+              mem_limit: 128m
+              environment:
+                REGISTRY_AUTH: htpasswd
+                REGISTRY_AUTH_HTPASSWD_REALM: repo.sothyr.de
+                REGISTRY_AUTH_HTPASSWD_PATH: /auth/htpasswd
+              volumes:
+                - ./htpasswd:/auth/htpasswd:ro
+                - data:/var/lib/registry
+              networks:
+                edge:
+                  aliases: [registry]
+          networks:
+            edge:
+              name: sothyr-shared
+              external: true
+          volumes:
+            data:
+        EOT
+      }
+      # "htpasswd" = { content = "...bcrypt lines...", mode = "0644" }  -> secrets.auto.tfvars
+    }
+    routes = {
+      web = { domains = ["repo.sothyr.de"], upstream = "registry:5000", encode = false, max_body = "2GB" }
+    }
+  }
+}
+
+dns_zones = {
+  "sothyr.de" = {
+    mode = "hetzner"
+    records = [
+      { name = "@", type = "MX", values = ["10 mail.example-provider.de."] },
+      { name = "@", type = "TXT", values = ["v=spf1 include:_spf.example-provider.de ~all"] },
+      { name = "_dmarc", type = "TXT", values = ["v=DMARC1; p=quarantine; rua=mailto:dmarc@sothyr.de"] },
+    ]
+  }
+  "bodensee-players.de" = { mode = "external" }
+  "ludite-kisslegg.de"  = { mode = "hetzner" }
+}

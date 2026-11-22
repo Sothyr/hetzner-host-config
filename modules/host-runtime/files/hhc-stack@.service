@@ -1,0 +1,16 @@
+[Unit]
+Description=Compose stack %i (hetzner-host-config)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/libexec/hhc/stack up %i
+ExecReload=/usr/local/libexec/hhc/stack apply %i
+ExecStop=/usr/local/libexec/hhc/stack down %i
+TimeoutStartSec=1800
+TimeoutStopSec=300
+
+[Install]
+WantedBy=multi-user.target

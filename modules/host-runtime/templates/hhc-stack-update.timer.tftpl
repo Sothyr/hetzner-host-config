@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily image update of compose stacks with auto update
+
+[Timer]
+OnCalendar=${on_calendar}
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

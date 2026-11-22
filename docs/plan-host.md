@@ -1,5 +1,8 @@
 # Plan: Hetzner host bootstrap and networking
 
+> **Superseded in parts (2026-11-19).** The tool is OpenTofu, not Ansible: see `docs/adr/0001-opentofu-instead-of-ansible.md` and `README.md`.
+> Services run as compose stacks under systemd, not as Quadlets. Goals, traffic path, TLS at Caddy, HAProxy and the open topics below still apply.
+
 Status: plan, not started. Written for the next implementer.
 Owner of decisions: Florian. Open points are at the end.
 Related: `C:\develop\sothyr-pages\docs\plan-ticketing.md` (sites and the shared pretix).

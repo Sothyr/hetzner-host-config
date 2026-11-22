@@ -1,0 +1,103 @@
+#cloud-config
+# Runs once at the first boot. Everything that changes later is done by the host-runtime module.
+hostname: ${hostname}
+timezone: ${timezone}
+
+disable_root: true
+ssh_pwauth: false
+ssh_deletekeys: true
+ssh_genkeytypes: []
+ssh_keys:
+  ed25519_private: |
+    ${indent(4, trimspace(host_private_key))}
+  ed25519_public: ${host_public_key}
+
+users:
+  - name: ${admin_user}
+    shell: /bin/bash
+    lock_passwd: true
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+
+%{ if swap_size != "" ~}
+swap:
+  filename: /swapfile
+  size: ${swap_size}
+  maxsize: ${swap_size}
+%{ endif ~}
+
+package_update: true
+package_upgrade: true
+packages:
+  - podman
+  - haproxy
+  - container-selinux
+  - git-core
+  - python3-pip
+  - firewalld
+  - policycoreutils-python-utils
+  - dnf-automatic
+  - tar
+  - socat
+%{ for p in packages ~}
+  - ${p}
+%{ endfor ~}
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-hhc.conf
+    permissions: "0600"
+    content: |
+      # Login only with a certificate of the user CA. No keys, no passwords, no root.
+      TrustedUserCAKeys /etc/ssh/hhc_user_ca.pub
+      AuthorizedPrincipalsFile /etc/ssh/auth_principals/%u
+      AuthorizedKeysFile none
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      PermitRootLogin no
+      MaxAuthTries 3
+      LoginGraceTime 20
+  - path: /etc/ssh/hhc_user_ca.pub
+    permissions: "0644"
+    content: |
+%{ for k in user_ca_keys ~}
+      ${trimspace(k)}
+%{ endfor ~}
+  - path: /etc/ssh/auth_principals/${admin_user}
+    permissions: "0644"
+    content: |
+%{ for p in admin_principals ~}
+      ${p}
+%{ endfor ~}
+  # Compose files of sothyr-pages use short image names (caddy:2). One search registry makes them unambiguous.
+  - path: /etc/containers/registries.conf.d/10-hhc.conf
+    content: |
+      unqualified-search-registries = ["docker.io"]
+      short-name-mode = "permissive"
+  - path: /etc/systemd/journald.conf.d/10-hhc.conf
+    content: |
+      [Journal]
+      SystemMaxUse=500M
+      MaxRetentionSec=30day
+  - path: /etc/sysctl.d/90-hhc.conf
+    content: |
+      vm.swappiness=10
+      vm.vfs_cache_pressure=50
+
+runcmd:
+  - [sysctl, --system]
+  - [systemctl, restart, systemd-journald]
+  # podman-compose from pip: sothyr-pages is tested with 1.6, EPEL 10 ships older versions.
+  - "pip3 install --root-user-action=ignore '${podman_compose}' || pip3 install --root-user-action=ignore --break-system-packages '${podman_compose}'"
+  - [mkdir, -p, /srv/stacks, /var/lib/hhc, /usr/local/libexec/hhc]
+  # Compose files mount files from the stack folders. SELinux stays enforcing, the folders get the container label.
+  - [semanage, fcontext, -a, -t, container_file_t, "/srv/stacks(/.*)?"]
+  - [restorecon, -R, /srv/stacks]
+  # HAProxy reaches the edge Caddy on 127.0.0.1:8080 and 8443. SELinux stays enforcing.
+  - [setsebool, -P, haproxy_connect_any, "1"]
+  - [systemctl, enable, --now, firewalld]
+  - [firewall-cmd, --permanent, --zone=public, --add-service=ssh, --add-service=http, --add-service=https]
+  - [firewall-cmd, --reload]
+  - [sed, -i, -e, "s/^apply_updates.*/apply_updates = yes/", -e, "s/^upgrade_type.*/upgrade_type = security/", /etc/dnf/automatic.conf]
+  - [systemctl, enable, --now, dnf-automatic.timer]
+  - [sshd, -t]
+  - [systemctl, restart, sshd]
+  - [touch, /var/lib/hhc/bootstrap-done]

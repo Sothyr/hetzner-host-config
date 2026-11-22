@@ -1,0 +1,14 @@
+# Remote state in Hetzner Object Storage (S3 compatible). Copy to backend.hcl (ignored by git).
+# Keys: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY in the environment, not in this file.
+# Check endpoint and region of your bucket in the Hetzner console.
+bucket                      = "hhc-tofu-state"
+key                         = "identity/terraform.tfstate"
+region                      = "fsn1"
+endpoints                   = { s3 = "https://fsn1.your-objectstorage.com" }
+use_path_style              = true
+use_lockfile                = true
+skip_credentials_validation = true
+skip_region_validation      = true
+skip_requesting_account_id  = true
+skip_metadata_api_check     = true
+skip_s3_checksum            = true

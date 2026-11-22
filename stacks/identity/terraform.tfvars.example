@@ -1,0 +1,14 @@
+# Realms of other apps. The keycloak login comes from TF_VAR_keycloak (JSON), see README.
+realms = {
+  foundry = {
+    display_name = "Foundry VTT"
+    frontend_url = "https://auth.sothyr.de"
+    roles        = { gm = "Game master", player = "Player" }
+    clients = {
+      foundry = {
+        root_url      = "https://vtt.sothyr.de"
+        redirect_uris = ["https://vtt.sothyr.de/*"]
+      }
+    }
+  }
+}
