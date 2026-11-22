@@ -58,8 +58,6 @@ module "sothyr_platform" {
   platform_name        = each.value.platform_name
   keycloak_version     = each.value.keycloak_version
   mail                 = merge(each.value.mail, contains(keys(var.secrets.smtp_passwords), each.key) ? { password = var.secrets.smtp_passwords[each.key] } : {})
-  smtprelay_config     = each.value.smtprelay_config
-  smarthost_password   = lookup(var.secrets.smarthost_passwords, each.key, each.value.smarthost_password)
   umami_admin_password = lookup(var.secrets.umami_admin, each.key, null)
 }
 

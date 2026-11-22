@@ -47,13 +47,14 @@ sothyr = {
     auth_host    = "auth.sothyr.de"
     stats_host   = "stats.sothyr.de"
     tickets_host = "tickets.sothyr.de"
+    # Own mail server on the platform (Postfix and OpenDKIM, sends straight to the recipient).
+    # hostname: reverse DNS entry of the server IP, set it in the Hetzner console and as an A record.
+    # dkim_domains: every domain used in MAIL_FROM. The container prints the DKIM DNS record on its first start.
     mail = {
-      from = "tickets@sothyr.de"
+      from         = "tickets@ludite-kisslegg.de"
+      hostname     = "mail.ludite-kisslegg.de"
+      dkim_domains = ["ludite-kisslegg.de"]
     }
-    # Content of platform/smtprelayd/smtprelayd.toml. Without it the relay stays off.
-    # smtprelay_config = <<-EOT
-    #   ...
-    # EOT
 
     sites = {
       bodensee-players = {

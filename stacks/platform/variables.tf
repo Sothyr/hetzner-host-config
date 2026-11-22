@@ -95,14 +95,13 @@ variable "registries" {
 variable "secrets" {
   description = "Secret values, kept apart so terraform.tfvars can live in git. Merged into the objects below."
   type = object({
-    deploy_keys         = optional(map(string), {})      # by git url
-    smarthost_passwords = optional(map(string), {})      # by sothyr host
-    smtp_passwords      = optional(map(string), {})      # by sothyr host, for mail.password
-    umami_admin         = optional(map(string), {})      # by sothyr host, after you changed it in Umami
-    site_env            = optional(map(map(string)), {}) # by "host/slug"
-    app_env             = optional(map(map(string)), {}) # by app name
-    app_files           = optional(map(map(string)), {}) # by app name, then file path
-    offsite = optional(map(object({                      # by host, S3 keys and restic password of the off-site copy
+    deploy_keys    = optional(map(string), {})      # by git url
+    smtp_passwords = optional(map(string), {})      # by sothyr host, for mail.password
+    umami_admin    = optional(map(string), {})      # by sothyr host, after you changed it in Umami
+    site_env       = optional(map(map(string)), {}) # by "host/slug"
+    app_env        = optional(map(map(string)), {}) # by app name
+    app_files      = optional(map(map(string)), {}) # by app name, then file path
+    offsite = optional(map(object({                 # by host, S3 keys and restic password of the off-site copy
       access_key = string
       secret_key = string
       password   = string
@@ -130,14 +129,14 @@ variable "sothyr" {
     platform_name    = optional(string, "Tickets")
     keycloak_version = optional(string, "26.0")
     mail = object({
-      host     = optional(string, "smtprelay")
-      port     = optional(number, 25)
-      user     = optional(string, "")
-      password = optional(string, "")
-      from     = string
+      host         = optional(string, "mail")
+      port         = optional(number, 25)
+      user         = optional(string, "")
+      password     = optional(string, "")
+      from         = string
+      hostname     = optional(string, "")
+      dkim_domains = optional(list(string), [])
     })
-    smtprelay_config   = optional(string)
-    smarthost_password = optional(string, "")
 
     sites = optional(map(object({
       name         = string

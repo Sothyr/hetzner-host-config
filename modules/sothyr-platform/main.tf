@@ -57,13 +57,19 @@ variable "keycloak_admin_user" {
 }
 
 variable "mail" {
-  description = "Mail of pretix and of the clubs. Default: the platform relay smtprelay:25."
+  description = <<-EOT
+    Mail of pretix and of the clubs. Default: the mail server of the platform (Postfix and OpenDKIM), mail:25.
+    hostname: name of the reverse DNS entry of the server IP. dkim_domains: sender domains, each gets a DKIM key.
+    Both are only used with host = "mail".
+  EOT
   type = object({
-    host     = optional(string, "smtprelay")
-    port     = optional(number, 25)
-    user     = optional(string, "")
-    password = optional(string, "")
-    from     = string
+    host         = optional(string, "mail")
+    port         = optional(number, 25)
+    user         = optional(string, "")
+    password     = optional(string, "")
+    from         = string
+    hostname     = optional(string, "")
+    dkim_domains = optional(list(string), [])
   })
   sensitive = true
 }
@@ -99,19 +105,6 @@ variable "proxy_sources" {
   default     = ["127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 }
 
-variable "smtprelay_config" {
-  description = "Content of platform/smtprelayd/smtprelayd.toml. Null keeps the relay off."
-  type        = string
-  default     = null
-}
-
-variable "smarthost_password" {
-  description = "Password of the smarthost, read by the relay config as SMTPRELAYD_SMARTHOST_PASSWORD."
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
 locals {
   secret_names = [
     "POSTGRES_PASSWORD", "PRETIX_DB_PASSWORD", "KEYCLOAK_DB_PASSWORD", "UMAMI_DB_PASSWORD",
@@ -122,9 +115,9 @@ locals {
   platform_secrets = [
     "POSTGRES_PASSWORD", "PRETIX_DB_PASSWORD", "KEYCLOAK_DB_PASSWORD", "UMAMI_DB_PASSWORD", "MARIADB_ROOT_PASSWORD",
     "PRETIX_DJANGO_SECRET", "UMAMI_APP_SECRET", "KEYCLOAK_ADMIN_USER", "KEYCLOAK_ADMIN_PASSWORD",
-    "UMAMI_ADMIN_USERNAME", "UMAMI_ADMIN_PASSWORD", "SMTPRELAYD_SMARTHOST_PASSWORD",
+    "UMAMI_ADMIN_USERNAME", "UMAMI_ADMIN_PASSWORD",
   ]
-  relay = var.smtprelay_config != null
+  mail_server = nonsensitive(var.mail.host) == "mail"
 
   # HAProxy on the host owns 80 and 443. The platform Caddy only listens on localhost.
   # !override replaces the port list of compose.platform.yml (podman-compose >= 1.2).
@@ -174,20 +167,21 @@ locals {
   env = merge(
     { for k in local.secret_names : k => random_password.secret[k].result },
     {
-      PLATFORM_NAME                 = var.platform_name
-      AUTH_URL                      = "https://${var.auth_host}"
-      STATS_URL                     = "https://${var.stats_host}"
-      PRETIX_BASE_URL               = "https://${var.tickets_host}"
-      HTTP_PORT                     = "80"
-      HTTPS_PORT                    = "443"
-      KEYCLOAK_VERSION              = var.keycloak_version
-      KEYCLOAK_ADMIN_USER           = var.keycloak_admin_user
-      SMTP_HOST                     = var.mail.host
-      SMTP_PORT                     = tostring(var.mail.port)
-      SMTP_USER                     = var.mail.user
-      SMTP_PASSWORD                 = var.mail.password
-      MAIL_FROM                     = var.mail.from
-      SMTPRELAYD_SMARTHOST_PASSWORD = var.smarthost_password
+      PLATFORM_NAME       = var.platform_name
+      AUTH_URL            = "https://${var.auth_host}"
+      STATS_URL           = "https://${var.stats_host}"
+      PRETIX_BASE_URL     = "https://${var.tickets_host}"
+      HTTP_PORT           = "80"
+      HTTPS_PORT          = "443"
+      KEYCLOAK_VERSION    = var.keycloak_version
+      KEYCLOAK_ADMIN_USER = var.keycloak_admin_user
+      SMTP_HOST           = var.mail.host
+      SMTP_PORT           = tostring(var.mail.port)
+      SMTP_USER           = var.mail.user
+      SMTP_PASSWORD       = var.mail.password
+      MAIL_FROM           = var.mail.from
+      MAIL_HOSTNAME       = var.mail.hostname
+      MAIL_DKIM_DOMAINS   = join(",", var.mail.dkim_domains)
       # As tools/rebuild.py --platform: the volumes of the register jobs carry the slug, a plain start has none.
       SITE_SLUG = ""
     },
@@ -198,15 +192,12 @@ locals {
     project       = "sothyr-platform"
     git           = var.git
     compose_files = ["compose.platform.yml", "hhc.override.yml"]
-    files = merge(
-      { "hhc.override.yml" = { content = local.override, mode = "0644" } },
-      local.relay ? { "platform/smtprelayd/smtprelayd.toml" = { content = var.smtprelay_config, mode = "0644" } } : {},
-    )
+    files         = { "hhc.override.yml" = { content = local.override, mode = "0644" } }
     post_checkout = local.caddyfile_patch
     env           = local.env
-    profiles      = local.relay ? ["relay"] : []
+    profiles      = local.mail_server ? ["mail"] : []
     pull          = []
-    build         = local.relay
+    build         = local.mail_server
     auto_update   = false
     after         = []
   }
