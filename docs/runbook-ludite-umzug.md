@@ -119,11 +119,17 @@ DNS zeigt schon auf diese VM. Es ändert sich nur das Routing.
 2. Die drei Namen zu `/etc/haproxy/platform-hosts.txt` hinzufügen, `sudo systemctl reload haproxy`.
 3. `python3 tools/rebuild.py --instance instances/ludite-kisslegg --engine docker`.
 
-Zwischen Schritt 2 und dem Ende von 3 ist die Seite kurz weg, bis Caddy die Zertifikate hat (etwa eine Minute). Danach in `nginx` die alten Ludite-Server-Blöcke entfernen: `ludite-kisslegg.de`, `www`, `vault`, `idm`, `vtt`. Der Block `rpg.` bleibt, wenn `solo-rpgs` weiterlaufen soll. `nginx -t` und `systemctl reload nginx`.
+Zwischen Schritt 2 und dem Ende von 3 ist die Seite kurz weg, bis Caddy die Zertifikate hat (etwa eine Minute). Danach in `nginx` die alten Ludite-Server-Blöcke entfernen: `ludite-kisslegg.de`, `www`, `vault`, `idm`, `vtt`. Der Block `rpg.` bleibt, `solo-rpgs` läuft weiter. Der Block `idm` geht mit dem alten Keycloak. `nginx -t` und `systemctl reload nginx`.
 
 ## 7. Altes Ludite entfernen (erst nach einigen Tagen)
 
-Container laut Messung: `ludite-database`, `ludite-frontend`, `ludite-backend`, `ludite-security`, `ludite-mail`, `ludite-vvt-foundry`. Vorher Daten sichern (Datenbank-Dump, Volumes). Dann stoppen, eine Woche liegen lassen, danach löschen. Den Azure-Agent entfernen, wenn er nicht mehr gebraucht wird. Der GitHub-Runner bleibt.
+Container laut Messung: `ludite-database`, `ludite-frontend`, `ludite-backend`, `ludite-security` (der alte Keycloak, Port 8083), `ludite-mail`, `ludite-vvt-foundry`. Vorher Daten sichern (Datenbank-Dump, Volumes).
+
+Achtung `rpg.ludite-kisslegg.de`: Die Seite meldet sich bei `idm.ludite-kisslegg.de` an (Realm `rpg-tools`, Client `rpg-tools`, siehe `.env` von `solo-rpgs`). Mit dem alten Keycloak fällt diese Anmeldung weg, bis ein neuer Realm auf dem Plattform-Keycloak steht (siehe unten). Das ist so entschieden. Den Dump von `ludite-database` deshalb aufbewahren, er enthält die Benutzer des Realms. Dann stoppen, eine Woche liegen lassen, danach löschen. Den Azure-Agent entfernen, wenn er nicht mehr gebraucht wird. Der GitHub-Runner bleibt.
+
+## rpg später: neuer Realm auf dem Plattform-Keycloak
+
+`solo-rpgs` bekommt später einen eigenen Realm auf dem Keycloak der Plattform. Dann in der `.env` von `solo-rpgs` `NUXT_PUBLIC_KEYCLOAK_URL` (auf `https://auth-neu.ludite-kisslegg.de` oder den späteren Namen), `NUXT_PUBLIC_KEYCLOAK_REALM` und `NUXT_PUBLIC_KEYCLOAK_CLIENT_ID` anpassen. Der Realm gehört nicht zu einem Verein, das Register-Skript legt ihn nicht an. Das ist ein eigener Schritt. Benutzer aus dem alten Realm lassen sich aus dem Datenbank-Dump holen, das ist ungeprüft.
 
 ## 8. Zertifikate der alten Seiten (certbot)
 
