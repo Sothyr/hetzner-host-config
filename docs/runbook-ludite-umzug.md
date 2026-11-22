@@ -131,14 +131,17 @@ Danach die Zertifikate der entfernten Namen löschen, damit certbot sie nicht we
 
 ## 8. Zertifikate der alten Seiten (certbot)
 
-Alle Zertifikate laufen mit `authenticator = nginx`. Ob der Plugin nach dem Umbau noch funktioniert, ist ungeprüft. Der Plugin sucht Server-Blöcke auf Port 80 und nginx hört jetzt auf 8180.
+Alle Zertifikate laufen mit `authenticator = nginx`. Nach dem Umbau findet der Plugin keine Server-Blöcke auf Port 80, denn nginx hört auf 8180. Der Dry-Run scheitert dann mit 404. Getestet auf der VM: Mit `http01_port = 8180` klappt die Erneuerung.
 
 ```
-sudo certbot certificates                 # Ablaufdaten
+sudo sh -c "sed -i '/^\[renewalparams\]/a http01_port = 8180' /etc/letsencrypt/renewal/*.conf"
+sudo sh -c "grep -c http01_port /etc/letsencrypt/renewal/*.conf"    # hinter jeder Datei eine 1
 sudo certbot renew --dry-run
 ```
 
-Schlägt der Test fehl, in `/etc/letsencrypt/renewal/*.conf` unter `[renewalparams]` die Zeile `http01_port = 8180` ergänzen und den Test wiederholen. Hilft das nicht, auf `webroot` oder einen separaten Pfad umstellen. Die Zertifikate laufen erst in Wochen ab, es eilt nicht, aber vor dem Ablauf klären.
+Das `sudo sh -c` ist nötig, weil der Ordner nur für root lesbar ist. Den `sed` nur einmal ausführen.
+Neue Zertifikate für nginx-Seiten mit `certbot --nginx --http-01-port 8180 ...` anfordern.
+Fehler bei Zertifikaten der entfernten Namen (`vault`, `vtt`, `idm`, `rpg`) sind erwartet, sie werden in Schritt 7 gelöscht.
 
 ## Rückwege
 
