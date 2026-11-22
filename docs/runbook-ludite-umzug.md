@@ -3,13 +3,14 @@
 Ziel: HAProxy statt nginx an Port 80 und 443. Alte Seiten bleiben hinter nginx. Neue Plattform und Ludite laufen daneben mit Docker.
 Kein Hochskalieren. Die VM hat 3,5 GB RAM. Das Ergebnis der Speicherprobe in Schritt 5 entscheidet, ob es reicht.
 
-Stand: Skripte und Konfig sind im Repo, aber noch nie auf der VM gelaufen. Jeder Schritt hat einen Rückweg.
+Stand 22.11.2026: Der Umzug ist gelaufen. Die Schritte 0 bis 6 sind auf der VM erprobt. Schritt 7 (Abbau) steht aus. Jeder Schritt hat einen Rückweg.
 
 ## 0. Vorher
 
-- DNS A-Einträge (und AAAA) auf `159.69.212.10` für `neu.`, `cms-neu.`, `auth-neu.`, `tickets-neu.`, `stats-neu.ludite-kisslegg.de`.
-- Frischer Hetzner-Snapshot der VM.
-- rDNS und A-Eintrag für `mail.ludite-kisslegg.de` (nur nötig, wenn Mails an echte Empfänger gehen sollen).
+- DNS A- und AAAA-Einträge auf `159.69.212.10` und `2a01:4f8:1c1e:a32c::1` für `neu.`, `cms-neu.`, `auth-neu.`, `tickets-neu.`, `stats-neu.ludite-kisslegg.de`. Die Namen für den Go-Live (`auth.`, `tickets.`, `stats.`, `cms.`) gleich mit anlegen.
+- **IPv6 prüfen, bevor ein AAAA-Eintrag gesetzt wird.** Auf der VM war die Adresse nie an `eth0` gesetzt. Besucher mit IPv6 liefen ins Leere. Behoben mit `nmcli connection modify "Wired connection 1" ipv6.method manual ipv6.addresses 2a01:4f8:1c1e:a32c::1/64 ipv6.gateway fe80::1`, danach `nmcli device reapply eth0`. Test: `curl -6 -sI https://<domain>`.
+- Hetzner-Backup der VM statt Snapshot (Entscheidung vom 22.11.).
+- Mailversand: siehe Abschnitt "Mail" weiter unten. Port 25 ist ausgehend offen (IPv4 getestet).
 - Login: SSH auf Port 2693.
 
 ## 1. Vorbereitung (Besucher merken nichts)
@@ -91,16 +92,20 @@ Das Log des Mail-Containers zeigt beim ersten Start den DKIM-Eintrag. Ihn als TX
 
 ## 4. Ludite als Testseite
 
-In `instances/ludite-kisslegg/.env` (eigenes Repo, nach `instances/` klonen):
+Die Vereins-`.env` entsteht aus der Dev-`.env` (`.env.dev`) mit einem Skript: Zugangsdaten neu erzeugen, nur Namen, Mail- und Kalenderwerte übernehmen. Pflichtwerte für die Plattform: `SMTP_HOST=mail`, `SMTP_PORT=25`, `PRETIX_URL=http://pretix:80`, `PRETIX_PUBLIC_URL=<öffentliche pretix-Adresse>` (sonst antwortet pretix "Unknown host"), `MAIL_FROM`, `CONTACT_TO`.
 
 - `SITE_URL=https://neu.ludite-kisslegg.de`, `CMS_URL=https://cms-neu.ludite-kisslegg.de`
-- `WORDPRESS_MEM_LIMIT`, `API_MEM_LIMIT`, `FRONTEND_MEM_LIMIT` setzen (zum Beispiel 200m, 150m, 64m, nach Messung anpassen).
+- `WORDPRESS_MEM_LIMIT=256m`, `API_MEM_LIMIT=160m`, `FRONTEND_MEM_LIMIT=96m`. Die API liegt im Betrieb bei etwa 120 MB.
+- `PRETIX_WEB_WORKERS=1` und `PRETIX_CELERY_WORKERS=1` in `platform.env`.
+- Node.js muss auf der VM installiert sein (`sudo dnf install -y nodejs`), sonst bricht der Aufruf beim Login-Design ab.
+- **Testadressen in `site.config.json`:** Das Frontend baut `cms.{domain}` aus dem Hostnamen. Auf `neu.` entstünde `cms.neu.`. Für den Test `urls` in der Instanz-`site.config.json` auf die `-neu`-Namen festsetzen (Kopie als `.orig` sichern). Beim Go-Live die Kopie zurückspielen.
 
 ```
 python3 tools/rebuild.py --instance instances/ludite-kisslegg --engine docker
+python3 tools/rebuild.py --instance instances/ludite-kisslegg --engine docker --people
 ```
 
-Die Domains stehen schon in `platform-hosts.txt`. Caddy holt die Zertifikate über HAProxy. Dann im Browser testen: Seite, Anmeldung, Tickets, Statistik, Testmail.
+Die alten Inhalte (Mitglieder, Spiele, Fragen, Ergebnisse) kommen über die Admin-Seiten `/de/admin/plays` und `/de/admin/ranking`. Das Konto braucht die Rolle `vorstand` im Realm. Dann im Browser testen: Seite, Anmeldung, Tickets, Statistik, Kontaktformular, Testmail.
 
 ## 5. Speicherprobe
 
@@ -113,13 +118,24 @@ Gut: `available` bleibt über 400 MB, Swap wird kaum genutzt. Schlecht: Swap fü
 
 ## 6. Ludite live schalten
 
-DNS zeigt schon auf diese VM. Es ändert sich nur das Routing.
+DNS zeigt schon auf diese VM. Es ändert sich nur das Routing. Vorher Dump von `ludite-database` sichern (`docker exec ludite-database sh -c 'pg_dumpall -U "$POSTGRES_USER"' | gzip > ludite-db-DATUM.sql.gz`) und `/etc/nginx/conf.d/ludite-kisslegg.de.conf` kopieren. Beides auf den PC holen.
 
-1. In `.env` des Vereins `SITE_URL=https://ludite-kisslegg.de`, `SITE_WWW_URL=https://www.ludite-kisslegg.de`, `CMS_URL=https://cms.ludite-kisslegg.de`. Der A-Eintrag `cms.` muss existieren.
-2. Die drei Namen zu `/etc/haproxy/platform-hosts.txt` hinzufügen, `sudo systemctl reload haproxy`.
-3. `python3 tools/rebuild.py --instance instances/ludite-kisslegg --engine docker`.
+1. Werte ändern, `.env`-Dateien vorher kopieren:
+   - `platform.env`: `AUTH_URL`, `STATS_URL`, `PRETIX_BASE_URL` auf `https://auth.`, `stats.`, `tickets.ludite-kisslegg.de`.
+   - Vereins-`.env`: `SITE_URL`, `SITE_WWW_URL`, `CMS_URL`, `PRETIX_PUBLIC_URL`, `MAIL_LOGO_URL` auf die echten Adressen.
+   - `python3 tools/doctor.py` prüft auch das DNS der neuen Namen.
+2. `python3 tools/rebuild.py --platform --engine docker`, warten bis Keycloak `healthy` ist.
+3. Die Kopie `site.config.json.orig` zurück nach `site.config.json`, dann `python3 tools/rebuild.py --instance instances/ludite-kisslegg --engine docker`.
+4. `platform-hosts.txt` sichern und durch die sechs neuen Namen ersetzen (`ludite-kisslegg.de`, `www.`, `cms.`, `auth.`, `tickets.`, `stats.`). `sudo haproxy -c -V -f /etc/haproxy/haproxy.cfg`, dann `sudo systemctl reload haproxy`. Die Seite ist etwa eine Minute weg, bis Caddy die Zertifikate hat.
+5. Prüfen: alle sechs Adressen mit `curl -s -o /dev/null -w '%{http_code}'`. Erwartet 200, bei `auth.` 302.
 
-Zwischen Schritt 2 und dem Ende von 3 ist die Seite kurz weg, bis Caddy die Zertifikate hat (etwa eine Minute). Danach in `nginx` die Datei `/etc/nginx/conf.d/ludite-kisslegg.de.conf` entfernen. Sie enthält alle alten Blöcke: `ludite-kisslegg.de`, `www`, `vault`, `idm`, `vtt` und `rpg`. Vorher als Kopie sichern. Dann `nginx -t` und `systemctl reload nginx`.
+**Keycloak:** Der Register-Job ergänzt bei einem bestehenden Realm die Adressen der Clients (`ensureClientUrls`, ab Commit 067b58f). Ohne diese Version kommt beim Login "Invalid parameter: redirect_uri". Dann von Hand in Keycloak beim Client `site` die Weiterleitungen, Web-Origins und Post-Logout-Adressen ergänzen, ebenso `wordpress` mit `https://cms.ludite-kisslegg.de/*`.
+
+**WordPress:** Mit `wp search-replace 'cms-neu.ludite-kisslegg.de' 'cms.ludite-kisslegg.de' --all-tables --dry-run` prüfen, ob importierte Seiten noch die Testadresse enthalten.
+
+**Speicher sparen:** Die alten Container nach dem Umschalten anhalten (`docker update --restart=no`, `docker stop`), nicht löschen. Das brachte auf der VM rund 400 MB. Der Rückweg bleibt: `docker start` und die alte `platform-hosts.txt` zurückspielen.
+
+Den Block `/etc/nginx/conf.d/ludite-kisslegg.de.conf` entfernt erst Schritt 7.
 
 ## 7. Altes Ludite entfernen (erst nach einigen Tagen)
 
@@ -142,6 +158,17 @@ sudo certbot renew --dry-run
 Das `sudo sh -c` ist nötig, weil der Ordner nur für root lesbar ist. Den `sed` nur einmal ausführen.
 Neue Zertifikate für nginx-Seiten mit `certbot --nginx --http-01-port 8180 ...` anfordern.
 Fehler bei Zertifikaten der entfernten Namen (`vault`, `vtt`, `idm`, `rpg`) sind erwartet, sie werden in Schritt 7 gelöscht.
+
+## Mail
+
+Eigener Postfix mit OpenDKIM im Container `mail` (Profil `mail`, `SMTP_HOST=mail`). Kein Relay.
+
+- Ausgehend Port 25 ist bei diesem Hetzner-Konto offen. Test auf IPv4, nicht nur `/dev/tcp` mit Hostname: `timeout 8 bash -c 'echo > /dev/tcp/<IPv4>/25'`.
+- DNS: `mail` A, SPF (`v=spf1 ... ip4:159.69.212.10 ...`, nur ein SPF-Eintrag), `mail._domainkey` mit dem Schlüssel aus `/var/lib/dkim/<domain>/mail.txt` im Container, `_dmarc` (`p=none`).
+- **Reverse-DNS** der IPv4 in der Hetzner Console auf `mail.ludite-kisslegg.de`. Ohne ihn landen Mails bei Gmail im Spam.
+- OpenDKIM signiert nur mit `InternalHosts` auch Mails anderer Container. Das steht im Entrypoint (Commit 7a7ab33). Prüfen: Gmail "Original anzeigen" zeigt SPF, DKIM und DMARC `PASS`.
+- Posteingang des Absenders: `@` MX zeigt auf die VM, der Postfix nimmt aber keine Post an. Antworten und Bounces an `noreply@` gehen verloren. Antworten kommen über die Reply-To-Adresse beim Verein an.
+- Neue Absender landen zunächst im Spam. Beim Vereinskonto einen Filter "nie als Spam" für `ludite-kisslegg.de` anlegen.
 
 ## Rückwege
 
